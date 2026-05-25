@@ -51,9 +51,7 @@ class WSGController(mp.Process):
             'cmd': Command.SCHEDULE_WAYPOINT.value,
             'target_pos': 0.0,
             'target_time': 0.0,
-            'profile_chunk_id': -1,
-            'profile_step_idx': -1,
-            'profile_enqueue_time': 0.0
+            # 'profile_chunk_id': -1
         }
         input_queue = SharedMemoryQueue.create_from_examples(
             shm_manager=shm_manager,
@@ -119,14 +117,13 @@ class WSGController(mp.Process):
         self.stop()
         
     # ========= command methods ============
-    def schedule_waypoint(self, pos: float, target_time: float, profile_chunk_id=-1, profile_step_idx=-1):
+    def schedule_waypoint(self, pos: float, target_time: float):
+    # def schedule_waypoint(self, pos: float, target_time: float, profile_chunk_id=-1):
         message = {
             'cmd': Command.SCHEDULE_WAYPOINT.value,
             'target_pos': pos,
             'target_time': target_time,
-            'profile_chunk_id': profile_chunk_id,
-            'profile_step_idx': profile_step_idx,
-            'profile_enqueue_time': time.time()
+            # 'profile_chunk_id': profile_chunk_id
         }
         self.input_queue.put(message)
 
@@ -173,9 +170,28 @@ class WSGController(mp.Process):
                 keep_running = True
                 t_start = time.monotonic()
                 iter_idx = 0
-                profile_pending = list()
-                profile_last_out_time = None
-                profile_last_target_time = None
+                # profile_pending = list()
+                # profile_output_chunk_id = None
+                # profile_output_stats = None
+
+                # def flush_profile_batch_output():
+                #     if profile_output_chunk_id is None or profile_output_stats is None:
+                #         return
+                #     interval_count = max(profile_output_stats['count'] - 1, 0)
+                #     avg_interval_ms = np.nan
+                #     if interval_count > 0:
+                #         avg_interval_ms = profile_output_stats['interval_sum_ms'] / interval_count
+                #     print(
+                #         '[WSG action batch output] '
+                #         f'host={self.hostname} '
+                #         f'chunk={profile_output_chunk_id} '
+                #         f'steps={profile_output_stats["count"]} '
+                #         f'avg_actual_interval_ms={avg_interval_ms:.2f} '
+                #         f'max_consume_lag_ms={profile_output_stats["max_lag_ms"]:.2f} '
+                #         f'duration_ms={(profile_output_stats["last_time"] - profile_output_stats["first_time"]) * 1000:.2f}',
+                #         flush=True
+                #     )
+
                 while keep_running:
                     # command gripper
                     t_now = time.monotonic()
@@ -186,27 +202,34 @@ class WSGController(mp.Process):
                     # print('controller', target_pos, target_vel)
                     info = wsg.script_position_pd(
                         position=target_pos, velocity=target_vel)
-                    while len(profile_pending) > 0 and profile_pending[0]['target_time'] <= t_now:
-                        profile_item = profile_pending.pop(0)
-                        out_interval_ms = np.nan
-                        if profile_last_out_time is not None:
-                            out_interval_ms = (t_now - profile_last_out_time) * 1000
-                        profile_last_out_time = t_now
-                        target_interval_ms = np.nan
-                        if profile_last_target_time is not None:
-                            target_interval_ms = (profile_item['target_time'] - profile_last_target_time) * 1000
-                        profile_last_target_time = profile_item['target_time']
-                        print(
-                            '[WSG action output] '
-                            f'host={self.hostname} '
-                            f'chunk={profile_item["chunk_id"]} '
-                            f'step={profile_item["step_idx"]} '
-                            f'target_interval_ms={target_interval_ms:.2f} '
-                            f'actual_interval_ms={out_interval_ms:.2f} '
-                            f'consume_lag_ms={(t_now - profile_item["target_time"]) * 1000:.2f} '
-                            f'scheduled_buffer_depth={len(profile_pending)}',
-                            flush=True
-                        )
+                    # while len(profile_pending) > 0 and profile_pending[0]['target_time'] <= t_now:
+                    #     profile_item = profile_pending.pop(0)
+                    #     chunk_id = profile_item['chunk_id']
+                    #     if chunk_id != profile_output_chunk_id:
+                    #         flush_profile_batch_output()
+                    #         profile_output_chunk_id = chunk_id
+                    #         profile_output_stats = {
+                    #             'count': 0,
+                    #             'first_time': t_now,
+                    #             'last_time': t_now,
+                    #             'last_output_time': None,
+                    #             'interval_sum_ms': 0.0,
+                    #             'max_lag_ms': -np.inf
+                    #         }
+                    #     if profile_output_stats['last_output_time'] is not None:
+                    #         profile_output_stats['interval_sum_ms'] += (
+                    #             t_now - profile_output_stats['last_output_time']) * 1000
+                    #     profile_output_stats['count'] += 1
+                    #     profile_output_stats['last_time'] = t_now
+                    #     profile_output_stats['last_output_time'] = t_now
+                    #     profile_output_stats['max_lag_ms'] = max(
+                    #         profile_output_stats['max_lag_ms'],
+                    #         (t_now - profile_item['target_time']) * 1000
+                    #     )
+                    # if len(profile_pending) == 0 and profile_output_stats is not None:
+                    #     flush_profile_batch_output()
+                    #     profile_output_chunk_id = None
+                    #     profile_output_stats = None
                     # time.sleep(1e-3)
 
                     # get state from robot
@@ -222,7 +245,6 @@ class WSGController(mp.Process):
                     self.ring_buffer.put(state)
 
                     # fetch command from queue
-                    queue_before = self.input_queue.qsize()
                     try:
                         commands = self.input_queue.get_all()
                         n_cmd = len(commands['cmd'])
@@ -244,33 +266,16 @@ class WSGController(mp.Process):
                             target_pos = command['target_pos'] * self.scale
                             target_time_wall = float(command['target_time'])
                             target_time = target_time_wall
-                            chunk_id = int(command['profile_chunk_id'])
-                            step_idx = int(command['profile_step_idx'])
-                            enqueue_time = float(command['profile_enqueue_time'])
-                            now_wall = time.time()
-                            queue_delay_ms = np.nan
-                            if enqueue_time > 0:
-                                queue_delay_ms = (now_wall - enqueue_time) * 1000
-                            print(
-                                '[WSG action input] '
-                                f'host={self.hostname} '
-                                f'chunk={chunk_id} '
-                                f'step={step_idx} '
-                                f'queue_wait_ms={queue_delay_ms:.2f} '
-                                f'time_until_target_ms={(target_time_wall - now_wall) * 1000:.2f} '
-                                f'queue_depth_before_get={queue_before} '
-                                f'scheduled_buffer_depth={len(profile_pending)}',
-                                flush=True
-                            )
+                            # chunk_id = int(command['profile_chunk_id'])
                             # translate global time to monotonic time
                             target_time = time.monotonic() - time.time() + target_time
                             curr_time = t_now
-                            old_last_waypoint_time = last_waypoint_time
-                            if target_time <= old_last_waypoint_time:
-                                profile_pending = [
-                                    item for item in profile_pending
-                                    if item['target_time'] <= curr_time
-                                ]
+                            # old_last_waypoint_time = last_waypoint_time
+                            # if target_time <= old_last_waypoint_time:
+                            #     profile_pending = [
+                            #         item for item in profile_pending
+                            #         if item['target_time'] <= curr_time
+                            #     ]
                             pose_interp = pose_interp.schedule_waypoint(
                                 pose=[target_pos, 0, 0, 0, 0, 0],
                                 time=target_time,
@@ -279,13 +284,12 @@ class WSGController(mp.Process):
                                 curr_time=curr_time,
                                 last_waypoint_time=last_waypoint_time
                             )
-                            scheduled_time = float(pose_interp.times[-1])
-                            profile_pending.append({
-                                'target_time': scheduled_time,
-                                'chunk_id': chunk_id,
-                                'step_idx': step_idx
-                            })
-                            profile_pending.sort(key=lambda item: item['target_time'])
+                            # scheduled_time = float(pose_interp.times[-1])
+                            # profile_pending.append({
+                            #     'target_time': scheduled_time,
+                            #     'chunk_id': chunk_id
+                            # })
+                            # profile_pending.sort(key=lambda item: item['target_time'])
                             last_waypoint_time = target_time
                         elif cmd == Command.RESTART_PUT.value:
                             t_start = command['target_time'] - time.time() + time.monotonic()

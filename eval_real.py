@@ -232,7 +232,7 @@ def main(input, output, robot_config,
             policy = workspace.model
             if cfg.training.use_ema:
                 policy = workspace.ema_model
-            policy.num_inference_steps = 4 # DDIM inference iterations
+            policy.num_inference_steps = 16 # DDIM inference iterations
             obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
             action_pose_repr = cfg.task.pose_repr.action_pose_repr
             print('obs_pose_rep', obs_pose_rep)
