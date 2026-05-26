@@ -1,5 +1,4 @@
 from typing import Dict, Tuple
-import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -12,11 +11,6 @@ from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.model.diffusion.transformer_for_action_diffusion import TransformerForActionDiffusion
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.vision.transformer_obs_encoder import TransformerObsEncoder
-
-
-def _sync_cuda():
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
 
 
 class DiffusionTransformerTimmPolicy(BaseImagePolicy):
@@ -113,20 +107,14 @@ class DiffusionTransformerTimmPolicy(BaseImagePolicy):
         obs_dict: must include "obs" key
         result: must include "action" key
         """
-        _sync_cuda()
-        t0 = time.perf_counter()
         assert 'past_action' not in obs_dict # not implemented yet
         # normalize input
         nobs = self.normalizer.normalize(obs_dict)
         B = next(iter(nobs.values())).shape[0]
-        _sync_cuda()
-        t_norm = time.perf_counter()
         
         # process input
         obs_tokens = self.obs_encoder(nobs)
         # (B, N, n_emb)
-        _sync_cuda()
-        t_obs = time.perf_counter()
         
         # empty data for action
         # cond_data = torch.zeros(size=(B, self.action_horizon, self.action_dim), device=self.device, dtype=self.dtype)
@@ -139,23 +127,10 @@ class DiffusionTransformerTimmPolicy(BaseImagePolicy):
             condition_mask=cond_mask,
             cond=obs_tokens.half(),
             **self.kwargs)
-        _sync_cuda()
-        t_diff = time.perf_counter()
         
         # unnormalize prediction
         assert nsample.shape == (B, self.action_horizon, self.action_dim)
         action_pred = self.normalizer['action'].unnormalize(nsample)
-        _sync_cuda()
-        t_done = time.perf_counter()
-
-        #print(
-        #    '[Policy profile] '
-        #    f'normalize={t_norm - t0:.4f}s, '
-        #    f'vit_obs_encoder={t_obs - t_norm:.4f}s, '
-        #    f'diffusion={t_diff - t_obs:.4f}s, '
-        #    f'unnormalize={t_done - t_diff:.4f}s, '
-        #    f'total={t_done - t0:.4f}s'
-        #)
 
         result = {
             'action': action_pred,

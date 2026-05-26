@@ -300,7 +300,6 @@ class BimanualUmiEnv:
 
         self.start_time = None
         self.last_time_step = 0
-        self.profile_action_chunk_id = 0
         print("self init is all ready")
     
     # ======== start-stop API =============
@@ -522,8 +521,6 @@ class BimanualUmiEnv:
         is_new = timestamps > receive_time
         new_actions = actions[is_new]
         new_timestamps = timestamps[is_new]
-        profile_chunk_id = self.profile_action_chunk_id
-        self.profile_action_chunk_id += 1
 
         assert new_actions.shape[1] // len(self.robots) == 7
         assert new_actions.shape[1] % len(self.robots) == 0
@@ -535,23 +532,13 @@ class BimanualUmiEnv:
                 g_latency = gc['gripper_action_latency'] if compensate_latency else 0.0
                 r_actions = new_actions[i, 7 * robot_idx + 0: 7 * robot_idx + 6]
                 g_actions = new_actions[i, 7 * robot_idx + 6]
-                if isinstance(robot, RTDEInterpolationController):
-                    robot.schedule_waypoint(
-                        pose=r_actions,
-                        target_time=new_timestamps[i] - r_latency,
-                        profile_chunk_id=profile_chunk_id,
-                        profile_step_idx=i
-                    )
-                else:
-                    robot.schedule_waypoint(
-                        pose=r_actions,
-                        target_time=new_timestamps[i] - r_latency
-                    )
+                robot.schedule_waypoint(
+                    pose=r_actions,
+                    target_time=new_timestamps[i] - r_latency
+                )
                 gripper.schedule_waypoint(
                     pos=g_actions,
-                    target_time=new_timestamps[i] - g_latency,
-                    profile_chunk_id=profile_chunk_id,
-                    profile_step_idx=i
+                    target_time=new_timestamps[i] - g_latency
                 )
 
         # record actions

@@ -104,10 +104,7 @@ class RTDEInterpolationController(mp.Process):
             'cmd': Command.SERVOL.value,
             'target_pose': np.zeros((6,), dtype=np.float64),
             'duration': 0.0,
-            'target_time': 0.0,
-            'profile_chunk_id': -1,
-            'profile_step_idx': -1,
-            'profile_enqueue_time': 0.0
+            'target_time': 0.0
         }
         input_queue = SharedMemoryQueue.create_from_examples(
             shm_manager=shm_manager,
@@ -199,17 +196,14 @@ class RTDEInterpolationController(mp.Process):
         }
         self.input_queue.put(message)
     
-    def schedule_waypoint(self, pose, target_time, profile_chunk_id=-1, profile_step_idx=-1):
+    def schedule_waypoint(self, pose, target_time):
         pose = np.array(pose)
         assert pose.shape == (6,)
 
         message = {
             'cmd': Command.SCHEDULE_WAYPOINT.value,
             'target_pose': pose,
-            'target_time': target_time,
-            'profile_chunk_id': profile_chunk_id,
-            'profile_step_idx': profile_step_idx,
-            'profile_enqueue_time': time.time()
+            'target_time': target_time
         }
         self.input_queue.put(message)
 
@@ -266,9 +260,6 @@ class RTDEInterpolationController(mp.Process):
             t_start = time.monotonic()
             iter_idx = 0
             keep_running = True
-            profile_pending = list()
-            profile_last_out_time = None
-            profile_last_target_time = None
             while keep_running:
                 # start control iteration
                 # t_start = rtde_c.initPeriod()
@@ -286,27 +277,6 @@ class RTDEInterpolationController(mp.Process):
                     dt, 
                     self.lookahead_time, 
                     self.gain)
-                while len(profile_pending) > 0 and profile_pending[0]['target_time'] <= t_now:
-                    profile_item = profile_pending.pop(0)
-                    out_interval_ms = np.nan
-                    if profile_last_out_time is not None:
-                        out_interval_ms = (t_now - profile_last_out_time) * 1000
-                    profile_last_out_time = t_now
-                    target_interval_ms = np.nan
-                    if profile_last_target_time is not None:
-                        target_interval_ms = (profile_item['target_time'] - profile_last_target_time) * 1000
-                    profile_last_target_time = profile_item['target_time']
-                    print(
-                        '[RTDE action output] '
-                        f'robot={self.robot_ip} '
-                        f'chunk={profile_item["chunk_id"]} '
-                        f'step={profile_item["step_idx"]} '
-                        f'target_interval_ms={target_interval_ms:.2f} '
-                        f'actual_interval_ms={out_interval_ms:.2f} '
-                        f'consume_lag_ms={(t_now - profile_item["target_time"]) * 1000:.2f} '
-                        f'scheduled_buffer_depth={len(profile_pending)}',
-                        flush=True
-                    )
                 
                 # update robot state
                 state = dict()
@@ -318,7 +288,6 @@ class RTDEInterpolationController(mp.Process):
                 self.ring_buffer.put(state)
 
                 # fetch command from queue
-                queue_before = self.input_queue.qsize()
                 try:
                     # commands = self.input_queue.get_all()
                     # n_cmd = len(commands['cmd'])
@@ -361,35 +330,10 @@ class RTDEInterpolationController(mp.Process):
                                 target_pose, duration))
                     elif cmd == Command.SCHEDULE_WAYPOINT.value:
                         target_pose = command['target_pose']
-                        target_time_wall = float(command['target_time'])
-                        target_time = target_time_wall
-                        chunk_id = int(command['profile_chunk_id'])
-                        step_idx = int(command['profile_step_idx'])
-                        enqueue_time = float(command['profile_enqueue_time'])
-                        now_wall = time.time()
-                        queue_delay_ms = np.nan
-                        if enqueue_time > 0:
-                            queue_delay_ms = (now_wall - enqueue_time) * 1000
-                        print(
-                            '[RTDE action input] '
-                            f'robot={self.robot_ip} '
-                            f'chunk={chunk_id} '
-                            f'step={step_idx} '
-                            f'queue_wait_ms={queue_delay_ms:.2f} '
-                            f'time_until_target_ms={(target_time_wall - now_wall) * 1000:.2f} '
-                            f'queue_depth_before_get={queue_before} '
-                            f'scheduled_buffer_depth={len(profile_pending)}',
-                            flush=True
-                        )
+                        target_time = float(command['target_time'])
                         # translate global time to monotonic time
                         target_time = time.monotonic() - time.time() + target_time
                         curr_time = t_now + dt
-                        old_last_waypoint_time = last_waypoint_time
-                        if target_time <= old_last_waypoint_time:
-                            profile_pending = [
-                                item for item in profile_pending
-                                if item['target_time'] <= curr_time
-                            ]
                         pose_interp = pose_interp.schedule_waypoint(
                             pose=target_pose,
                             time=target_time,
@@ -398,13 +342,6 @@ class RTDEInterpolationController(mp.Process):
                             curr_time=curr_time,
                             last_waypoint_time=last_waypoint_time
                         )
-                        scheduled_time = float(pose_interp.times[-1])
-                        profile_pending.append({
-                            'target_time': scheduled_time,
-                            'chunk_id': chunk_id,
-                            'step_idx': step_idx
-                        })
-                        profile_pending.sort(key=lambda item: item['target_time'])
                         last_waypoint_time = target_time
                     else:
                         keep_running = False
