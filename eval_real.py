@@ -516,7 +516,7 @@ def main(input, output, robot_config,
                         # the same step actions are always the target for
                         action_timestamps = (np.arange(len(action), dtype=np.float64)
                             ) * dt + obs_timestamps[-1]
-                        print(dt)
+                        # print(dt)
                         action_exec_latency = 0.01
                         curr_time = time.time()
                         is_new = action_timestamps > (curr_time + action_exec_latency)
@@ -548,7 +548,7 @@ def main(input, output, robot_config,
                         text = 'Episode: {}, Time: {:.1f}'.format(
                             episode_id, time.monotonic() - t_start
                         )
-                        print("visualize preparing")
+                        # print("visualize preparing")
                         cv2.putText(
                             vis_img,
                             text,
@@ -558,11 +558,11 @@ def main(input, output, robot_config,
                             thickness=1,
                             color=(255,255,255)
                         )
-                        print("cv2.putText executed")
+                        # print("cv2.putText executed")
                         #cv2.imwrite('default.jpg', vis_img[...,::-1])
                         cv2.imshow('default', vis_img[...,::-1])
                         #cv2.waitkey(1)
-                        print("cv2.imshow executed")
+                        # print("cv2.imshow executed")
 
                         _ = cv2.pollKey()
                         press_events = key_counter.get_press_events()
