@@ -119,6 +119,8 @@ def solve_sphere_collision(ee_poses, robots_config):
 @click.option('--max_duration', '-md', default=2000000, help='Max duration for each epoch in seconds.')
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")
 @click.option('--play_speed', default=1.0, type=float, help="Playback speed multiplier for submitted action timestamps.")
+@click.option('--num_inference_steps', '--denoise_steps', default=4, type=int, show_default=True, help="DDIM denoising iterations for each policy inference.")
+@click.option('--inference_latency_scale', default=1.0, type=float, show_default=True, help="Scale policy inference latency by sleeping after each inference.")
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
 @click.option('-nm', '--no_mirror', is_flag=True, default=True)
 @click.option('-sf', '--sim_fov', type=float, default=None)
@@ -129,7 +131,7 @@ def main(input, output, robot_config,
     camera_reorder,
     vis_camera_idx, init_joints, 
     steps_per_inference, max_duration,
-    frequency, play_speed, command_latency,
+    frequency, play_speed, num_inference_steps, inference_latency_scale, command_latency, 
     no_mirror, sim_fov, camera_intrinsics, mirror_swap):
     max_gripper_width = 0.09
     gripper_speed = 0.2
@@ -157,6 +159,8 @@ def main(input, output, robot_config,
     dt = 1/frequency
     assert play_speed > 0
     action_dt = dt / play_speed
+    assert num_inference_steps > 0
+    assert inference_latency_scale >= 1.0
 
     obs_res = get_real_obs_resolution(cfg.task.shape_meta)
     # load fisheye converter
@@ -235,7 +239,8 @@ def main(input, output, robot_config,
             policy = workspace.model
             if cfg.training.use_ema:
                 policy = workspace.ema_model
-            policy.num_inference_steps = 4 # DDIM inference iterations
+            policy.num_inference_steps = num_inference_steps # DDIM inference iterations
+            print('num_inference_steps:', policy.num_inference_steps)
             obs_pose_rep = cfg.task.pose_repr.obs_pose_repr
             action_pose_repr = cfg.task.pose_repr.action_pose_repr
             # print('obs_pose_rep', obs_pose_rep)
@@ -486,7 +491,12 @@ def main(input, output, robot_config,
                             result = policy.predict_action(obs_dict)
                             raw_action = result['action_pred'][0].detach().to('cpu').numpy()
                             action = get_real_umi_action(raw_action, obs, action_pose_repr)
-                            # print('Inference latency:', time.time() - s)
+                            inference_latency = time.time() - s
+                            if inference_latency_scale > 1.0:
+                                extra_latency = inference_latency * (inference_latency_scale - 1.0)
+                                time.sleep(extra_latency)
+                                inference_latency += extra_latency
+                            print('Inference latency:', inference_latency)
                         
                         # convert policy action to env actions
                         this_target_poses = action
@@ -506,6 +516,10 @@ def main(input, output, robot_config,
                             )
 
                         # deal with timing
+                        # the same step actions are always the target for
+                        action_timestamps = (np.arange(len(action), dtype=np.float64)
+                            ) * dt + obs_timestamps[-1]
+                        # print(dt)
                         action_exec_latency = 0.01
                         curr_time = time.time()
                         # Drop stale actions using the policy/original control
