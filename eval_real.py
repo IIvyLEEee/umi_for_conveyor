@@ -546,7 +546,7 @@ def main(input, output, robot_config,
                             timestamps=action_timestamps,
                             compensate_latency=True
                         )
-                        # print(f"Submitted {len(this_target_poses)} steps of actions.")
+                        print(f"Submitted {len(this_target_poses)} steps of actions.")
 
                         # visualize
                         episode_id = env.replay_buffer.n_episodes
